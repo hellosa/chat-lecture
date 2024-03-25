@@ -1,6 +1,7 @@
 import os
 import time
 import random
+import hashlib
 from datetime import timedelta
 
 from dotenv import load_dotenv
@@ -20,15 +21,16 @@ load_dotenv()
 
 
 with gr.Blocks() as demo:
-    DB_CHROMA_PATH = './tmp/db_chroma'
+    DB_CHROMA_PATH = './tmp/db_chroma/'
+    SUBTITLE_PATH = './tmp/subtitles/'
 
     # the layout
     with gr.Row():
-        chatbot = gr.Chatbot(scale=2)
-        with gr.Column(scale=1):
-            upload_file = gr.File()
-            btn = gr.Button(value="process")
-            ready = gr.Label(value="not ready")
+        chatbot = gr.Chatbot()
+        lecture = gr.PlayableVideo()
+    with gr.Row():
+        btn = gr.Button(value="process", scale=1)
+        ready = gr.Label(value="not ready", scale=3)
 
     # disable interactive before uploading the video
     msg = gr.Textbox(
@@ -85,9 +87,24 @@ with gr.Blocks() as demo:
         chat_history.append((message, bot_message))
         return "", chat_history
 
-    btn.click(process_video, [upload_file], [ready, msg])
-    msg.submit(respond, [msg, chatbot], [msg, chatbot])
+    def after_video_upload(video_path):
+        subtitle_path = '{}{}.srt'.format(SUBTITLE_PATH, md5_checksum(video_path))
+        if os.path.exists(subtitle_path):
+            return "ready", [video_path,  subtitle_path] ,gr.Textbox(interactive=True, placeholder="")
+        else:
+            return "not ready", [video_path, subtitle_path], gr.Textbox(interactive=False, placeholder="please process the video first")
 
+    btn.click(process_video, [lecture], [ready, msg])
+    msg.submit(respond, [msg, chatbot], [msg, chatbot])
+    lecture.upload(after_video_upload, [lecture], [ready, lecture, msg])
+
+
+def md5_checksum(file_path):
+    with open(file_path, 'rb') as fh:
+        md5 = hashlib.md5()
+        while chunk := fh.read(8192):
+            md5.update(chunk)
+    return md5.hexdigest()
 
 def video2audio(video_file, audio_file):
     video = VideoFileClip(video_file)
