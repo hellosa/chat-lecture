@@ -19,42 +19,52 @@ from langchain.prompts import PromptTemplate
 
 load_dotenv()
 
+SUBTITLE_PATH = './tmp/subtitles/'
+AUDIO_PATH = './tmp/audios/'
+DB_CHROMA_PATH = './tmp/db_chroma/'
+
 
 with gr.Blocks() as demo:
-    DB_CHROMA_PATH = './tmp/db_chroma/'
-    SUBTITLE_PATH = './tmp/subtitles/'
-
-    # the layout
+    # LAYOUT
     with gr.Row():
         chatbot = gr.Chatbot()
         lecture = gr.PlayableVideo()
-    with gr.Row():
-        btn = gr.Button(value="process", scale=1)
-        ready = gr.Label(value="not ready", scale=3)
 
     # disable interactive before uploading the video
     msg = gr.Textbox(
         interactive=False,
         placeholder="please upload the video first",
         )
-    clear = gr.ClearButton([msg, chatbot])
+    with gr.Row():
+        btn_start = gr.Button(value="start")
+        btn_clean = gr.ClearButton([msg, chatbot])
+
 
     # the process functions
-    def process_video(video_file):
+    def process_video(video_path):
+        """
+            mp4 -> wav -> srt
+        """
+        # create tmp dir
         os.makedirs("tmp", exist_ok=True)
-        video_file_name = os.path.basename(video_file)
 
-        audio_file = video_file_name.replace(".mp4", "_audio.wav")
-        audio_file_path = "./tmp/{}".format(audio_file)
+        # define the file path
+        video_filename = os.path.basename(video_path)
+        video_filename_md5 = md5_checksum(video_path)
+        audio_file_path = "{}{}.wav".format(AUDIO_PATH, video_filename_md5)
+        srt_file_path = "{}{}.srt".format(SUBTITLE_PATH, video_filename_md5)
 
-        srt_file = video_file_name.replace(".mp4", ".srt")
-        srt_file_path = "./tmp/{}".format(srt_file)
+        # if the srt file exists, return
+        if os.path.exists(srt_file_path):
+            return [video_path, srt_file_path], gr.Textbox(interactive=True, placeholder="")
 
-        video2audio(video_file, audio_file_path)
+        # mp4 -> wav
+        video2audio(video_path, audio_file_path)
+
+        # wav -> srt
         audio2text(audio_file_path, srt_file_path)
-        txt2vdb(srt_file_path, DB_CHROMA_PATH)
 
-        return "ready", gr.Textbox(interactive=True, placeholder="")
+        return [video_path, srt_file_path], gr.Textbox(interactive=True, placeholder="")
 
     def respond(message, chat_history):
         # VDB
@@ -87,16 +97,8 @@ with gr.Blocks() as demo:
         chat_history.append((message, bot_message))
         return "", chat_history
 
-    def after_video_upload(video_path):
-        subtitle_path = '{}{}.srt'.format(SUBTITLE_PATH, md5_checksum(video_path))
-        if os.path.exists(subtitle_path):
-            return "ready", [video_path,  subtitle_path] ,gr.Textbox(interactive=True, placeholder="")
-        else:
-            return "not ready", [video_path, subtitle_path], gr.Textbox(interactive=False, placeholder="please process the video first")
-
-    btn.click(process_video, [lecture], [ready, msg])
+    btn_start.click(process_video, [lecture], [lecture, msg])
     msg.submit(respond, [msg, chatbot], [msg, chatbot])
-    lecture.upload(after_video_upload, [lecture], [ready, lecture, msg])
 
 
 def md5_checksum(file_path):
@@ -115,7 +117,10 @@ def audio2text(audio_file, srt_file):
     r = sr.Recognizer()
     with sr.AudioFile(audio_file) as source:
         audio = r.record(source)
-    result = r.recognize_whisper(audio, show_dict=True) # use whisper to stt
+    # use whisper to stt
+    # model options: tiny, base, small, medium, large
+    # tiny for speed, large for accuracy
+    result = r.recognize_whisper(audio, model='base', show_dict=True)
 
     with open(srt_file, 'w') as f:
         for i in result['segments']:
@@ -149,5 +154,4 @@ def format_timedelta(seconds):
 
 
 if __name__ == "__main__":
-    demo.queue(max_size=10).launch()
-
+    demo.launch()
