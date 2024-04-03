@@ -46,7 +46,8 @@ with gr.Blocks() as demo:
             mp4 -> wav -> srt
         """
         # create tmp dir
-        os.makedirs("tmp", exist_ok=True)
+        os.makedirs(AUDIO_PATH, exist_ok=True)
+        os.makedirs(SUBTITLE_PATH, exist_ok=True)
 
         # define the file path
         video_filename = os.path.basename(video_path)
