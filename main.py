@@ -14,7 +14,13 @@ from langchain.chains import RetrievalQA
 from langchain.document_loaders import TextLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.chat_models import ChatOpenAI
-from langchain.prompts import PromptTemplate
+from langchain.prompts import HumanMessagePromptTemplate, SystemMessagePromptTemplate
+from langchain_core.messages import SystemMessage
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_openai import ChatOpenAI
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnablePassthrough
+from langchain_community.chat_models import ChatOllama
 
 
 load_dotenv()
@@ -23,6 +29,9 @@ SUBTITLE_PATH = './tmp/subtitles/'
 AUDIO_PATH = './tmp/audios/'
 DB_CHROMA_PATH = './tmp/db_chroma/'
 
+# global variables
+global_chat_model = None
+global_srt_path = None
 
 with gr.Blocks() as demo:
     # LAYOUT
@@ -56,44 +65,53 @@ with gr.Blocks() as demo:
         srt_file_path = "{}{}.srt".format(SUBTITLE_PATH, video_filename_md5)
 
         # if the srt file exists, return
-        if os.path.exists(srt_file_path):
-            return [video_path, srt_file_path], gr.Textbox(interactive=True, placeholder="")
+        if os.path.exists(srt_file_path) == False:
+            # mp4 -> wav
+            video2audio(video_path, audio_file_path)
 
-        # mp4 -> wav
-        video2audio(video_path, audio_file_path)
+            # wav -> srt
+            audio2text(audio_file_path, srt_file_path)
 
-        # wav -> srt
-        audio2text(audio_file_path, srt_file_path)
+        global global_srt_path
+        global_srt_path = srt_file_path
 
         return [video_path, srt_file_path], gr.Textbox(interactive=True, placeholder="")
 
     def respond(message, chat_history):
-        # VDB
-        vdb = Chroma(persist_directory=DB_CHROMA_PATH, embedding_function=OpenAIEmbeddings())
+        global global_srt_path
+        srt_path = global_srt_path
 
-        # LLM
-        llm = ChatOpenAI(model_name="gpt-3.5-turbo-16k", temperature=0, streaming=True)
+        system_prompt_template = SystemMessagePromptTemplate.from_template(
+                """
+                你是一个视频课程的助教，下面是一堂课程视频的字幕文件的内容，你要根据字幕的内容，对用户的问题进行回答。
+                ---
+                {context}
+                ---
+                """
+            )
+        with open(srt_path, 'r') as f:
+            srt_content = f.read()
+        system_prompt = system_prompt_template.format_messages(context=srt_content)
 
-        prompt_template = """
-        我给你的是一个视频课程的字幕文件，你要根据整个字幕文件的内容回答我的 question
-        不知道的事情要说不知道
-
-        {context}
-
-        Question: {question}
-        """
-        PROMPT = PromptTemplate(
-            template=prompt_template, input_variables=["context", "question"]
+        prompt = ChatPromptTemplate.from_messages(
+            [
+                system_prompt[0],
+                HumanMessagePromptTemplate.from_template("{question}"),
+            ]
         )
 
-        chain_type_kwargs = {"prompt": PROMPT}
-        qa_chain = RetrievalQA.from_chain_type(
-            llm=llm,
-            chain_type="stuff",
-            retriever=vdb.as_retriever(),
-            chain_type_kwargs=chain_type_kwargs)
+        #chat_model = ChatOpenAI(model="moonshot-v1-32k", temperature=0)
+        #chat_model = ChatOpenAI(model="gpt-4-0125-preview", temperature=0)
+        chat_model = ChatOllama(model="", temperature=0)
 
-        bot_message = qa_chain.run(message)
+        chain = (
+            {"question": RunnablePassthrough()}
+            | prompt 
+            | chat_model
+            | StrOutputParser()
+        )
+
+        bot_message = chain.invoke(message)
 
         chat_history.append((message, bot_message))
         return "", chat_history
